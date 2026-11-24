@@ -1,0 +1,16 @@
+{
+  "Name": "Support Tracker Revision Deployer",
+  "IsCustom": true,
+  "Description": "Read and update the support tracker Container App and inspect its revisions.",
+  "Actions": [
+    "Microsoft.App/containerApps/read",
+    "Microsoft.App/containerApps/write",
+    "Microsoft.App/containerApps/revisions/read"
+  ],
+  "NotActions": [],
+  "DataActions": [],
+  "NotDataActions": [],
+  "AssignableScopes": [
+    "/subscriptions/47598c7f-34b2-4e28-97b9-52440f0bdf3a/resourceGroups/rg-support-tracker-assessment"
+  ]
+}

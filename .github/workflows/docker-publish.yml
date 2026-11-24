@@ -1,4 +1,4 @@
-name: Test and publish Docker image
+name: Test, publish, and deploy
 
 on:
   push:
@@ -7,9 +7,10 @@ on:
 
 permissions:
   contents: read
+  id-token: write
 
 concurrency:
-  group: docker-publish-main
+  group: deploy-main
   cancel-in-progress: true
 
 jobs:
@@ -46,3 +47,42 @@ jobs:
           tags: |
             ${{ vars.DOCKERHUB_USERNAME }}/support-tracker:assessment
             ${{ vars.DOCKERHUB_USERNAME }}/support-tracker:${{ github.sha }}
+
+      - name: Sign in to Azure with GitHub OIDC
+        uses: azure/login@v2
+        with:
+          client-id: ${{ vars.AZURE_CLIENT_ID }}
+          tenant-id: ${{ vars.AZURE_TENANT_ID }}
+          subscription-id: ${{ vars.AZURE_SUBSCRIPTION_ID }}
+
+      - name: Deploy the commit image to Azure
+        env:
+          IMAGE: docker.io/${{ vars.DOCKERHUB_USERNAME }}/support-tracker:${{ github.sha }}
+        run: |
+          az containerapp update \
+            --name support-tracker \
+            --resource-group rg-support-tracker-assessment \
+            --image "$IMAGE" \
+            --only-show-errors \
+            --output none
+
+      - name: Verify the deployed revision and login challenge
+        env:
+          IMAGE: docker.io/${{ vars.DOCKERHUB_USERNAME }}/support-tracker:${{ github.sha }}
+        run: |
+          revision=$(az containerapp show --name support-tracker --resource-group rg-support-tracker-assessment --query properties.latestRevisionName -o tsv)
+          deployed_image=$(az containerapp revision show --name support-tracker --resource-group rg-support-tracker-assessment --revision "$revision" --query 'properties.template.containers[0].image' -o tsv)
+          test "$deployed_image" = "$IMAGE"
+          for attempt in $(seq 1 24); do
+            state=$(az containerapp revision show --name support-tracker --resource-group rg-support-tracker-assessment --revision "$revision" --query properties.healthState -o tsv)
+            if [ "$state" = Healthy ]; then
+              status=$(curl -sS --max-time 15 -o /dev/null -w '%{http_code}' https://support-tracker.bluesky-bc9ab669.southeastasia.azurecontainerapps.io/ || true)
+              if [ "$status" = 401 ]; then
+                echo "Revision $revision is healthy and the demo login is active."
+                exit 0
+              fi
+            fi
+            sleep 10
+          done
+          echo "The new revision did not become healthy with login enabled in time." >&2
+          exit 1
