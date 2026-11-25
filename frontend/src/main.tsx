@@ -139,7 +139,7 @@ function App() {
           <span className="brandmark">✦</span>
           <div>
             <strong>Support Desk</strong>
-            <small>FROM SWATI B (SELF HOSTED)</small>
+            <small>FROM ARUN AUGUSTINE (SELF HOSTED)</small>
           </div>
         </div>
         <span className="topnote">Ticket management</span>
