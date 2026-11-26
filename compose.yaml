@@ -5,13 +5,45 @@ services:
     environment:
       ACCEPT_EULA: "Y"
       MSSQL_SA_PASSWORD: "${SQL_PASSWORD:-LocalOnly_Strong123!}"
-    ports: ["1433:1433"]
-    volumes: ["sql_data:/var/opt/mssql"]
-  app:
-    build: .
-    ports: ["8080:8080"]
+    ports:
+      - "127.0.0.1:1433:1433"
+    volumes:
+      - sql_data:/var/opt/mssql
+
+  backend:
+    image: mcr.microsoft.com/dotnet/sdk:8.0
+    working_dir: /src/SupportTracker
+    command: dotnet watch --non-interactive run --urls http://0.0.0.0:8080
     environment:
+      DOTNET_USE_POLLING_FILE_WATCHER: "1"
+      DOTNET_WATCH_SUPPRESS_BROWSER_REFRESH: "1"
+      Auth__Username: "${ADMIN_USERNAME:-admin}"
+      Auth__Password: "${ADMIN_PASSWORD:-LocalAdmin_Strong123!}"
       ConnectionStrings__Tickets: "Server=sqlserver,1433;Database=SupportTracker;User Id=sa;Password=${SQL_PASSWORD:-LocalOnly_Strong123!};TrustServerCertificate=True"
-    depends_on: [sqlserver]
+    volumes:
+      - ./backend/SupportTracker:/src/SupportTracker
+      - backend_bin:/src/SupportTracker/bin
+      - backend_obj:/src/SupportTracker/obj
+    depends_on:
+      - sqlserver
+
+  frontend:
+    image: node:20-alpine
+    working_dir: /app
+    command: sh -c "npm install && npm run dev -- --port 5173 --strictPort"
+    environment:
+      API_PROXY_TARGET: http://backend:8080
+      CHOKIDAR_USEPOLLING: "true"
+    ports:
+      - "127.0.0.1:8080:5173"
+    volumes:
+      - ./frontend:/app
+      - frontend_node_modules:/app/node_modules
+    depends_on:
+      - backend
+
 volumes:
   sql_data:
+  backend_bin:
+  backend_obj:
+  frontend_node_modules:

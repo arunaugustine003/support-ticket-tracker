@@ -76,7 +76,7 @@ jobs:
           for attempt in $(seq 1 24); do
             state=$(az containerapp revision show --name support-tracker --resource-group rg-support-tracker-assessment --revision "$revision" --query properties.healthState -o tsv)
             if [ "$state" = Healthy ]; then
-              status=$(curl -sS --max-time 15 -o /dev/null -w '%{http_code}' https://support-tracker.bluesky-bc9ab669.southeastasia.azurecontainerapps.io/ || true)
+              status=$(curl -sS --max-time 15 -o /dev/null -w '%{http_code}' https://support-tracker.bluesky-bc9ab669.southeastasia.azurecontainerapps.io/api/tickets/summary || true)
               if [ "$status" = 401 ]; then
                 echo "Revision $revision is healthy and the demo login is active."
                 exit 0

@@ -28,27 +28,211 @@ const empty: Input = {
   status: "open",
   priority: "medium",
 };
-async function request<T>(url: string, init?: RequestInit): Promise<T> {
-  const response = await fetch(url, init);
+type Session = { expiresAt: string };
+
+class ApiError extends Error {
+  constructor(
+    message: string,
+    readonly status: number,
+  ) {
+    super(message);
+  }
+}
+
+async function request<T>(
+  url: string,
+  init?: RequestInit,
+  onUnauthorized?: () => void,
+): Promise<T> {
+  const headers = new Headers(init?.headers);
+  const method = (init?.method ?? "GET").toUpperCase();
+  if (!["GET", "HEAD", "OPTIONS"].includes(method)) {
+    headers.set("X-SupportDesk-CSRF", "1");
+  }
+  const response = await fetch(url, {
+    ...init,
+    headers,
+    credentials: "same-origin",
+  });
+  if (response.status === 401) onUnauthorized?.();
   if (!response.ok) {
     const body: {
       title?: string;
       detail?: string;
       errors?: Record<string, string[]>;
     } = await response.json().catch(() => ({}));
-    throw new Error(
+    throw new ApiError(
       Object.values(body.errors ?? {})
         .flat()
         .join(" ") ||
         body.detail ||
         body.title ||
         `Request failed (${response.status})`,
+      response.status,
     );
   }
   if (response.status === 204) return undefined as T;
   return response.json() as Promise<T>;
 }
+function Login({ onLogin }: { onLogin: (session: Session) => void }) {
+  const [error, setError] = useState("");
+  const [busy, setBusy] = useState(false);
+
+  async function signIn(event: React.FormEvent<HTMLFormElement>) {
+    event.preventDefault();
+    const credentials = new FormData(event.currentTarget);
+    setError("");
+    setBusy(true);
+    try {
+      const session = await request<Session>("/api/auth/login", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({
+          username: credentials.get("username"),
+          password: credentials.get("password"),
+        }),
+      });
+      onLogin(session);
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not sign in.");
+    } finally {
+      setBusy(false);
+    }
+  }
+
+  return (
+    <main className="login">
+      <section className="panel formpanel">
+        <div className="brand">
+          <span className="brandmark" aria-hidden="true">
+            ✦
+          </span>
+          <strong>Support Desk</strong>
+          <small>FROM ARUN AUGUSTINE</small>
+        </div>
+        <h1>Sign in</h1>
+        <form onSubmit={(event) => void signIn(event)}>
+          <label>
+            Username
+            <input
+              name="username"
+              autoComplete="username"
+              maxLength={128}
+              required
+            />
+          </label>
+          <label>
+            Password
+            <input
+              name="password"
+              type="password"
+              autoComplete="current-password"
+              maxLength={256}
+              required
+            />
+          </label>
+          {error && (
+            <div className="alert" role="alert">
+              {error}
+            </div>
+          )}
+          <button className="primary" disabled={busy}>
+            {busy ? "Signing in…" : "Sign in"}
+          </button>
+        </form>
+      </section>
+    </main>
+  );
+}
+
 function App() {
+  const [session, setSession] = useState<Session | null | undefined>(undefined);
+  const [sessionError, setSessionError] = useState("");
+  const [sessionAttempt, setSessionAttempt] = useState(0);
+  const clearSession = useCallback(() => setSession(null), []);
+
+  useEffect(() => {
+    const controller = new AbortController();
+    setSessionError("");
+    void request<Session>("/api/auth/session", { signal: controller.signal })
+      .then((current) => {
+        if (!controller.signal.aborted) setSession(current);
+      })
+      .catch((error: unknown) => {
+        if (controller.signal.aborted) return;
+        if (error instanceof ApiError && error.status === 401) setSession(null);
+        else setSessionError("Could not check your sign-in. Try again.");
+      });
+    return () => controller.abort();
+  }, [sessionAttempt]);
+
+  useEffect(() => {
+    try {
+      sessionStorage.removeItem("support-desk.session");
+    } catch {
+      // The previous sign-in storage can be unavailable.
+    }
+  }, []);
+
+  useEffect(() => {
+    if (!session) return;
+    const timer = window.setTimeout(
+      clearSession,
+      Math.max(0, Date.parse(session.expiresAt) - Date.now()),
+    );
+    return () => window.clearTimeout(timer);
+  }, [session, clearSession]);
+
+  return (
+    <>
+      {session === undefined ? (
+        <main className="login">
+          <section className="panel">
+            {sessionError ? (
+              <>
+                <p role="alert">{sessionError}</p>
+                <button
+                  className="primary"
+                  onClick={() => setSessionAttempt((attempt) => attempt + 1)}
+                >
+                  Retry
+                </button>
+              </>
+            ) : (
+              <p role="status">Checking sign-in…</p>
+            )}
+          </section>
+        </main>
+      ) : session ? (
+        <TicketDesk onSignOut={clearSession} />
+      ) : (
+        <Login onLogin={setSession} />
+      )}
+      <footer>
+        © Copyright All Rights Reserved By <strong>Arun Augustine</strong>
+      </footer>
+    </>
+  );
+}
+
+function TicketDesk({ onSignOut }: { onSignOut: () => void }) {
+  const api = useCallback(
+    <T,>(url: string, init?: RequestInit) => request<T>(url, init, onSignOut),
+    [onSignOut],
+  );
+  const [signingOut, setSigningOut] = useState(false);
+
+  async function signOut() {
+    setSigningOut(true);
+    try {
+      await api("/api/auth/logout", { method: "POST" });
+      onSignOut();
+    } catch (error) {
+      setError(error instanceof Error ? error.message : "Could not sign out.");
+      setSigningOut(false);
+    }
+  }
+
   const [tickets, setTickets] = useState<Page | null>(null);
   const [summary, setSummary] = useState<Summary | null>(null);
   const [filter, setFilter] = useState("");
@@ -69,8 +253,8 @@ function App() {
       if (search.trim()) params.set("search", search.trim());
       try {
         const [list, stats] = await Promise.all([
-          request<Page>(`/api/tickets?${params}`, { signal }),
-          request<Summary>("/api/tickets/summary", { signal }),
+          api<Page>(`/api/tickets?${params}`, { signal }),
+          api<Summary>("/api/tickets/summary", { signal }),
         ]);
         setTickets(list);
         setSummary(stats);
@@ -81,7 +265,7 @@ function App() {
         if (!signal.aborted) setLoading(false);
       }
     },
-    [filter, search, page],
+    [api, filter, search, page],
   );
   useEffect(() => {
     const controller = new AbortController();
@@ -95,7 +279,7 @@ function App() {
     setBusy(true);
     setError("");
     try {
-      await request(url, {
+      await api(url, {
         method,
         headers: { "Content-Type": "application/json" },
         ...(body ? { body: JSON.stringify(body) } : {}),
@@ -139,10 +323,17 @@ function App() {
           <span className="brandmark">✦</span>
           <div>
             <strong>Support Desk</strong>
-            <small>FROM ARUN AUGUSTINE (SELF HOSTED)</small>
+            <small>FROM ARUN AUGUSTINE</small>
           </div>
         </div>
-        <span className="topnote">Ticket management</span>
+        <button
+          className="signout"
+          type="button"
+          onClick={() => void signOut()}
+          disabled={signingOut}
+        >
+          {signingOut ? "Signing out…" : "Sign out"}
+        </button>
       </header>
       <main>
         <div className="heading">
@@ -388,9 +579,6 @@ function App() {
             </section>
           </aside>
         </div>
-        <footer>
-          Support Desk <span>Built for the work that matters.</span>
-        </footer>
       </main>
     </>
   );
