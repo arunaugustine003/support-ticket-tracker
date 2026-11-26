@@ -119,7 +119,7 @@ Consider `Orders(OrderDate DESC, Id DESC) INCLUDE (CustomerId, Total)` to suppor
 - Queue a suggestion job on the server after creating a ticket; return immediately.
 - Send only the minimum redacted ticket text to an approved provider over TLS.
 - Keep the API key in a secret manager, never in the browser or repository.
-- Use a fixed system instruction and clearly delimit user text as untrusted data.
+- Use a fixed system instruction to reduce hallucination and clearly delimit user text as untrusted data.
 - Ask for a short summary and one priority from a fixed JSON schema.
 - Validate the response and treat suggestions as advisory, never automatic authority.
 - Set timeouts, bounded retries with backoff, and an explicit failed/pending state.
